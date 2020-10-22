@@ -1,12 +1,8 @@
 import * as React from "react";
-import {
-  ReactSurveyElement,
-  SurveyQuestionElementBase,
-} from "./reactquestionelement";
+import { ReactSurveyElement, SurveyQuestionElementBase } from "./reactquestionelement";
 import { QuestionMatrixModel } from "../question_matrix";
 import { MatrixRowModel } from "../question_matrix";
 import { ReactQuestionFactory } from "./reactquestionfactory";
-import { ItemValue } from "../itemvalue";
 
 export class SurveyQuestionMatrix extends SurveyQuestionElementBase {
   constructor(props: any) {
@@ -32,8 +28,7 @@ export class SurveyQuestionMatrix extends SurveyQuestionElementBase {
     }
   }
 
-  render(): JSX.Element {
-    if (!this.question) return null;
+  protected renderElement(): JSX.Element {
     var cssClasses = this.question.cssClasses;
     var firstTH = this.question.hasRows ? <td /> : null;
     var headers = [];
@@ -42,7 +37,7 @@ export class SurveyQuestionMatrix extends SurveyQuestionElementBase {
       var key = "column" + i;
       var columText = this.renderLocString(column.locText);
       headers.push(
-        <th className={this.question.cssClasses.headerCell} key={key}>
+        <th className={this.question.cssClasses.headerCell} key={key} id={this.question.getAriaMatrixHeaderId(i)}>
           {columText}
         </th>
       );
@@ -100,8 +95,10 @@ export class SurveyQuestionMatrixRow extends ReactSurveyElement {
     this.row.value = event.target.value;
     this.setState({ value: this.row.value });
   }
-  render(): JSX.Element {
-    if (!this.row) return null;
+  protected canRender(): boolean {
+    return !!this.row;
+  }
+  protected renderElement(): JSX.Element {
     var firstTD = null;
     if (this.question.hasRows) {
       var rowText = this.renderLocString(this.row.locText);
@@ -146,7 +143,7 @@ export class SurveyQuestionMatrixRow extends ReactSurveyElement {
         td = (
           <td
             key={key}
-            headers={column.locText.renderedHtml}
+            headers={this.question.getAriaMatrixHeaderId(i)}
             className={this.question.cssClasses.cell}
           >
             <label className={itemClass}>

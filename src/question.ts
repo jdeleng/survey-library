@@ -1,5 +1,5 @@
 import { HashTable, Helpers } from "./helpers";
-import { JsonObject, Serializer } from "./jsonobject";
+import { JsonObject, Serializer, property } from "./jsonobject";
 import {
   SurveyError,
   SurveyElement,
@@ -102,7 +102,6 @@ export class Question
     };
     this.locProcessedTitle = new LocalizableString(this, true);
     this.locProcessedTitle.sharedData = locTitleValue;
-    this.createLocalizableString("description", this, true);
     var locCommentText = this.createLocalizableString(
       "commentText",
       this,
@@ -219,6 +218,9 @@ export class Question
   }
   protected onVisibleChanged() {
     this.setPropertyValue("isVisible", this.isVisible);
+    if (this.isVisible && this.survey && this.survey.isClearValueOnHidden) {
+      this.updateValueWithDefaults();
+    }
     if (!this.isVisible && this.errors && this.errors.length > 0) {
       this.errors = [];
     }
@@ -326,7 +328,9 @@ export class Question
     return !!this.data ? this.data.getFilteredValues() : null;
   }
   public getDataFilteredProperties(): any {
-    return !!this.data ? this.data.getFilteredProperties() : null;
+    var props = !!this.data ? this.data.getFilteredProperties() : {};
+    props.question = this;
+    return props;
   }
   /**
    * A parent element. It can be panel or page.
@@ -443,15 +447,8 @@ export class Question
    * Please note, this property is hidden for questions without input, for example html question.
    * @see title
    */
-  public get description(): string {
-    return this.getLocalizableStringText("description");
-  }
-  public set description(val: string) {
-    this.setLocalizableStringText("description", val);
-  }
-  get locDescription(): LocalizableString {
-    return this.getLocalizableString("description");
-  }
+  @property({ localizable: true })
+  description: string;
   /**
    * Question description location. By default, value is "default" and it depends on survey questionDescriptionLocation property
    * You may change it to "underInput" to render it under question input or "underTitle" to rendered it under title.
@@ -555,7 +552,7 @@ export class Question
       this.afterRenderQuestionCallback(this, el);
     }
   }
-  public beforeDestoyQuestionElement(el: any) {}
+  public beforeDestroyQuestionElement(el: any) {}
   /**
    * Returns the rendred question title.
    */
@@ -916,6 +913,9 @@ export class Question
   public get ariaRole(): string {
     return null;
   }
+  public getAriaMatrixHeaderId(index: number): string {
+    return this.id + "_matrixHeader_" + index;
+  }
   public get hasOther(): boolean {
     return this.getPropertyValue("hasOther", false);
   }
@@ -1016,7 +1016,11 @@ export class Question
    */
   public get no(): string {
     if (!this.hasTitle || this.hideNumber) return "";
-    return Helpers.getNumberByIndex(this.visibleIndex, this.getStartIndex());
+    var no = Helpers.getNumberByIndex(this.visibleIndex, this.getStartIndex());
+    if (!!this.survey) {
+      no = this.survey.getUpdatedQuestionNo(this, no);
+    }
+    return no;
   }
   protected getStartIndex(): string {
     if (!!this.parent) return this.parent.getQuestionStartIndex();
@@ -1136,7 +1140,18 @@ export class Question
     return this.getPropertyValue("defaultValue");
   }
   public set defaultValue(val: any) {
+    if (this.isValueExpression(val)) {
+      this.defaultValueExpression = val.substr(1);
+      return;
+    }
     this.setPropertyValue("defaultValue", this.convertDefaultValue(val));
+    this.updateValueWithDefaults();
+  }
+  public get defaultValueExpression(): any {
+    return this.getPropertyValue("defaultValueExpression");
+  }
+  public set defaultValueExpression(val: any) {
+    this.setPropertyValue("defaultValueExpression", val);
     this.updateValueWithDefaults();
   }
   /**
@@ -1243,6 +1258,8 @@ export class Question
       return;
     if (!this.isDesignMode && !this.isEmpty()) return;
     if (this.isEmpty() && this.isDefaultValueEmpty()) return;
+    if (!!this.survey && this.survey.isClearValueOnHidden && !this.isVisible)
+      return;
     this.setDefaultValue();
   }
   getQuestionFromArray(name: string, index: number): IQuestion {
@@ -1252,18 +1269,22 @@ export class Question
     return this.defaultValue;
   }
   protected isDefaultValueEmpty(): boolean {
-    return this.isValueEmpty(this.defaultValue);
+    return !this.defaultValueExpression && this.isValueEmpty(this.defaultValue);
   }
   protected setDefaultValue() {
     this.value = this.getValueAndRunExpression(
-      Helpers.getUnbindValue(this.defaultValue)
+      Helpers.getUnbindValue(this.defaultValue),
+      this.defaultValueExpression
     );
   }
-  protected getValueAndRunExpression(val: any) {
-    if (!val) return val;
-    if (!!val && typeof val == "string" && val.length > 0 && val[0] == "=") {
-      val = this.runExpression(val.substr(1));
+  protected isValueExpression(val: any) {
+    return !!val && typeof val == "string" && val.length > 0 && val[0] == "=";
+  }
+  protected getValueAndRunExpression(val: any, expression: string) {
+    if (!!expression) {
+      val = this.runExpression(expression);
     }
+    if (!val) return val;
     if (val instanceof Date) {
       val = val.toISOString().slice(0, 10);
     }
@@ -1596,6 +1617,13 @@ export class Question
   }
   public clearUnusedValues() {}
   onAnyValueChanged(name: string) {}
+  checkBindings(valueName: string, value: any) {
+    if (this.bindings.isEmpty() || !this.data) return;
+    var props = this.bindings.getPropertiesByValueName(valueName);
+    for (var i = 0; i < props.length; i++) {
+      this[props[i]] = value;
+    }
+  }
   //ILocalizableOwner
   locOwner: ILocalizableOwner = null;
   /**
@@ -1712,6 +1740,10 @@ Serializer.addClass("question", [
   "valueName",
   "enableIf:condition",
   "defaultValue:value",
+  {
+    name: "defaultValueExpression:expression",
+    category: "logic",
+  },
   "correctAnswer:value",
   "isRequired:switch",
   "requiredIf:condition",
@@ -1724,6 +1756,13 @@ Serializer.addClass("question", [
     name: "validators:validators",
     baseClassName: "surveyvalidator",
     classNamePart: "validator",
+  },
+  {
+    name: "bindings:bindings",
+    serializationProperty: "bindings",
+    visibleIf: function (obj: any) {
+      return obj.bindings.getNames().length > 0;
+    },
   },
 ]);
 Serializer.addAlterNativeClassName("question", "questionbase");

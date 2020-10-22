@@ -264,7 +264,10 @@ Serializer.addClass(
 
 Serializer.addClass(
   "carowner",
-  [{ name: "carType", default: "fast" }, "name"],
+  [
+    { name: "carType", default: "fast" },
+    { name: "name", dataList: ["item1", "item2"], isUnique: true },
+  ],
   function () {
     return new CarOwner();
   }
@@ -2326,4 +2329,48 @@ QUnit.test("nextToProperty attribute", function (assert) {
     "created with correct nextToProperty attribute"
   );
   Serializer.removeProperty("truck", "test");
+});
+QUnit.test("check dataList attribute", function (assert) {
+  var prop = Serializer.findProperty("carowner", "name");
+  assert.deepEqual(
+    prop.dataList,
+    ["item1", "item2"],
+    "dataList attribute created correctly"
+  );
+});
+QUnit.test("check isUnique attribute", function (assert) {
+  var prop = Serializer.findProperty("carowner", "name");
+  assert.deepEqual(
+    prop.isUnique,
+    true,
+    "isUnique attribute created correctly"
+  );
+});
+QUnit.test("multiplevalues/array property should call onPropertyChanged on modifying array", function (assert) {
+  Serializer.addProperty("carowner", "ar:multiplevalues");
+  var owner = new CarOwner();
+  var propName = "";
+  var counter = 0;
+  owner.onPropertyChanged.add((sender, options) => {
+    propName = options.name;
+    counter ++;
+  });
+  owner["ar"] = ["A"];
+  owner["ar"].push("B");
+  assert.deepEqual(
+    owner["ar"],
+    ["A", "B"],
+    "property set correctly"
+  );
+  assert.equal(
+    counter,
+    2,
+    "onPropertyChanged called two times"
+  );
+  assert.equal(
+    propName,
+    "ar",
+    "onPropertyChanged called on chaning 'ar' property"
+  );
+  Serializer.removeProperty("carowner", "ar");
 });

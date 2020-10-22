@@ -1,5 +1,43 @@
 import { Helpers, HashTable } from "./helpers";
 
+export interface IPropertyDecoratorOptions {
+  defaultValue?: any;
+  defaultSource?: string;
+  localizable?: { name: string, onGetTextCallback?: (str: string) => string } | boolean;
+}
+
+function ensureLocString(target: any, options: IPropertyDecoratorOptions, key: string) {
+  let locString = target.getLocalizableString(key);
+  if(!locString) {
+    locString = target.createLocalizableString(key, target, true);
+    if(typeof options.localizable === "object" && typeof options.localizable.onGetTextCallback === "function") {
+      locString.onGetTextCallback = options.localizable.onGetTextCallback;
+    }
+  }
+}
+
+export function property(options?: IPropertyDecoratorOptions) {
+  return function (target: any, key: string) {
+    if(!options || !options.localizable) {
+      Object.defineProperty(target, key, {
+        get: function() { return this.getPropertyValue(key, !!options ? options.defaultValue || this[options.defaultSource] : undefined); },
+        set: function(val: any) { this.setPropertyValue(key, val); }
+      });
+    } else {
+      Object.defineProperty(target, key, {
+        get: function() { ensureLocString(this, options, key); return this.getLocalizableStringText(key, options.defaultValue || this[options.defaultSource]); },
+        set: function(val: any) { ensureLocString(this, options, key);  this.setLocalizableStringText(key, val); }
+      });
+      Object.defineProperty(target, options.localizable === true ? "loc" + key.charAt(0).toUpperCase() + key.slice(1) : options.localizable.name, {
+        get: function() {
+          ensureLocString(this, options, key); 
+          return this.getLocalizableString(key);
+        }
+      });
+    }
+  };
+}
+
 export interface IObject {
   [key: string]: any;
 }
@@ -16,6 +54,8 @@ export class JsonObjectProperty implements IObject {
     "isSerializable",
     "isLightSerializable",
     "isCustom",
+    "isBindable",
+    "isUnique",
     "isDynamicChoices",
     "isLocalizableValue",
     "className",
@@ -39,12 +79,14 @@ export class JsonObjectProperty implements IObject {
     "maxLength",
     "maxValue",
     "minValue",
+    "dataListValue",
   ];
   private classInfoValue: JsonMetadataClass;
   private typeValue: string = null;
   private choicesValue: Array<any> = null;
   private baseValue: any = null;
   private isRequiredValue: boolean = false;
+  private isUniqueValue: boolean = false;
   private readOnlyValue: boolean | null = null;
   private visibleValue: boolean | null = null;
   private isLocalizableValue: boolean | null = null;
@@ -54,6 +96,7 @@ export class JsonObjectProperty implements IObject {
   public isLightSerializable: boolean = true;
   public isCustom: boolean = false;
   public isDynamicChoices: boolean = false; //TODO obsolete, use dependsOn attribute
+  public isBindable: boolean = false;
   public className: string = null;
   public alternativeName: string = null;
   public classNamePart: string = null;
@@ -69,6 +112,7 @@ export class JsonObjectProperty implements IObject {
   public maxLength: number = -1;
   public maxValue: any;
   public minValue: any;
+  private dataListValue: Array<string>;
   public layout: string = null;
   public onGetValue: (obj: any) => any = null;
   public onSetValue: (obj: any, value: any, jsonConv: JsonObject) => any = null;
@@ -103,6 +147,12 @@ export class JsonObjectProperty implements IObject {
   }
   public set isRequired(val: boolean) {
     this.isRequiredValue = val;
+  }
+  public get isUnique() {
+    return this.isUniqueValue;
+  }
+  public set isUnique(val: boolean) {
+    this.isUniqueValue = val;
   }
   public get hasToUseGetValue() {
     return this.onGetValue || this.serializationProperty;
@@ -230,6 +280,12 @@ export class JsonObjectProperty implements IObject {
   public set isLocalizable(val: boolean) {
     this.isLocalizableValue = val;
   }
+  public get dataList(): Array<string> {
+    return Array.isArray(this.dataListValue) ? this.dataListValue : [];
+  }
+  public set dataList(val: Array<string>) {
+    this.dataListValue = val;
+  }
   public mergeWith(prop: JsonObjectProperty) {
     var valuesNames = JsonObjectProperty.mergableValues;
     for (var i = 0; i < valuesNames.length; i++) {
@@ -343,16 +399,30 @@ export class CustomPropertiesCollection {
       Object.defineProperty(obj, prop.name, desc);
     } else {
       var defaultValue = prop.defaultValue;
-      if (
-        JsonObject.metaData.isDescendantOf(prop.className, "itemvalue") &&
-        typeof obj.createNewArray === "function"
-      ) {
-        obj.createNewArray(prop.name, function (item: any) {
-          item.locOwner = obj;
-          item.ownerPropertyName = prop.name;
-        });
-        obj.setPropertyValue(prop.name, defaultValue);
-        defaultValue = null;
+      var isArrayProp = false;
+      if(typeof obj.createNewArray === "function") {
+        if (
+          JsonObject.metaData.isDescendantOf(prop.className, "itemvalue")
+        ) {
+          obj.createNewArray(prop.name, function (item: any) {
+            item.locOwner = obj;
+            item.ownerPropertyName = prop.name;
+          });
+          isArrayProp = true;
+          obj.setPropertyValue(prop.name, defaultValue);
+          defaultValue = null;
+        }
+        //It is a simple array property
+        if(prop.type === "multiplevalues") {
+          obj.createNewArray(prop.name);
+          isArrayProp = true;
+        }
+        if(isArrayProp) {
+          if(Array.isArray(defaultValue)) {
+            obj.setPropertyValue(prop.name, defaultValue);
+          }
+          defaultValue = null;
+        }
       }
       if (!!obj.getPropertyValue && !!obj.setPropertyValue) {
         var desc = {
@@ -461,8 +531,17 @@ export class JsonMetadataClass {
       if (!Helpers.isValueEmpty(propInfo.minValue)) {
         prop.minValue = propInfo.minValue;
       }
+      if (!Helpers.isValueEmpty(propInfo.dataList)) {
+        prop.dataList = propInfo.dataList;
+      }
       if (!Helpers.isValueEmpty(propInfo.isDynamicChoices)) {
         prop.isDynamicChoices = propInfo.isDynamicChoices;
+      }
+      if (!Helpers.isValueEmpty(propInfo.isBindable)) {
+        prop.isBindable = propInfo.isBindable;
+      }
+      if (!Helpers.isValueEmpty(propInfo.isUnique)) {
+        prop.isUnique = propInfo.isUnique;
       }
       if (propInfo.visible === true || propInfo.visible === false) {
         prop.visible = propInfo.visible;

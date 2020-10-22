@@ -113,7 +113,7 @@ export var matrixDropdownColumnTypes = {
       data: any
     ) => {
       onUpdateSelectBaseCellQuestion(cellQuestion, column, question, data);
-      if (
+      if (!!cellQuestion.locOptionsCaption &&
         cellQuestion.locOptionsCaption.isEmpty &&
         !question.locOptionsCaption.isEmpty
       ) {
@@ -2470,7 +2470,7 @@ export class QuestionMatrixDropdownModelBase
 Serializer.addClass(
   "matrixdropdowncolumn",
   [
-    "!name",
+    {name: "!name", isUnique: true},
     { name: "title", serializationProperty: "locTitle" },
     {
       name: "cellType",
